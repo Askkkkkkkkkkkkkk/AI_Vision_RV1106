@@ -1,17 +1,33 @@
 cmake_minimum_required(VERSION 3.10)
 
-set(SDK_PATH $ENV{LUCKFOX_SDK_PATH})
-if(NOT SDK_PATH)
-    message(WARNING "Please Set Luckfox-pico SDK Path. Such as:export LUCKFOX_SDK_PATH=/home/user/luckfox-pico")
+#Processing Parameters
+if(DEFINED LIBC_TYPE)
+    message(STATUS "Selected libc type: ${LIBC_TYPE}")
+else()
+    message(FATAL_ERROR "No libc type selected!")
     return()
 endif()
 
-set(CMAKE_C_COMPILER "${SDK_PATH}/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin/arm-rockchip830-linux-uclibcgnueabihf-gcc"
-)
-set(CMAKE_CXX_COMPILER "${SDK_PATH}/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin/arm-rockchip830-linux-uclibcgnueabihf-g++"
-)
+set(SDK_PATH $ENV{LUCKFOX_SDK_PATH})
+set(GLIBC_COMPILER $ENV{GLIBC_COMPILER})
+if(${LIBC_TYPE} STREQUAL "uclibc")
+    if (NOT SDK_PATH)
+        message(WARNING "Please Set Luckfox-pico SDK Path. Such as:export LUCKFOX_SDK_PATH=/home/user/luckfox-pico")
+        return()
+    else()
+        set(CMAKE_C_COMPILER "${SDK_PATH}/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin/arm-rockchip830-linux-uclibcgnueabihf-gcc")
+        set(CMAKE_CXX_COMPILER "${SDK_PATH}/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin/arm-rockchip830-linux-uclibcgnueabihf-g++")
+    endif()
+elseif(${LIBC_TYPE} STREQUAL "glibc")
+    if (NOT GLIBC_COMPILER)
+        message(WARNING "Please Set arm32 glibc compiler Path. Such as:export GLIBC_COMPILER=/opt/arm-linux-gnueabihf/bin/arm-linux-gnueabihf-")
+        return()
+    else()
+        set(CMAKE_C_COMPILER    "${GLIBC_COMPILER}gcc")
+        set(CMAKE_CXX_COMPILER  "${GLIBC_COMPILER}g++")
+    endif()
+endif()
 
-#Processing Parameters
 if(DEFINED EXAMPLE_DIR)
     message(STATUS "Selected source directory: ${EXAMPLE_DIR}")
 else()
@@ -26,17 +42,15 @@ else()
     return()
 endif()
 
-
 project(${EXAMPLE_NAME})
-
-link_directories(${CMAKE_CURRENT_SOURCE_DIR}/lib)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ 3rdparty.out)
 
 set(CMAKE_INSTALL_RPATH "$ORIGIN/lib")
 add_definitions(-DRV1106_1103)
 
+link_directories(${CMAKE_CURRENT_SOURCE_DIR}/lib/${LIBC_TYPE})
+
 #Opencv 4
-set(OpenCV_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/cmake/opencv4")
+set(OpenCV_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/${LIBC_TYPE}/lib/cmake/opencv4")
 find_package(OpenCV REQUIRED)
 #Thread
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -54,29 +68,51 @@ add_compile_options(-g -Wall
 
 set(CMAKE_EXE_LINKER_FLAGS  "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath-link,${CMAKE_CURRENT_SOURCE_DIR}/lib:/usr/lib")
 
-target_link_libraries(${PROJECT_NAME}  
-                    ${OpenCV_LIBS}
-                    ${LIBRKNNRT}
-                    Threads::Threads
-                    rockiva
-                    sample_comm
-                    rockit
-                    rockchip_mpp
-                    rkaiq
-                    pthread
-                    rtsp
-                    )
+if(${LIBC_TYPE} STREQUAL "uclibc")
+    target_link_libraries(${PROJECT_NAME}
+                        ${OpenCV_LIBS}
+                        rknnmrt
+                        Threads::Threads
+                        rockiva
+                        sample_comm
+                        rockit
+                        rockchip_mpp
+                        rkaiq
+                        pthread
+                        rtsp
+                        rga
+                        )
+elseif(${LIBC_TYPE} STREQUAL "glibc")
+    target_link_libraries(${PROJECT_NAME}
+                        ${OpenCV_LIBS}
+                        rknnmrt
+                        Threads::Threads
+                        sample_comm
+                        rockit
+                        rockchip_mpp
+                        rkaiq
+                        pthread
+                        rtsp
+                        stdc++
+                        func_none
+                        c
+                        m
+                        rt
+                        dl
+                        rga
+                        )
+endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE                        
                             ${OpenCV_INCLUDE_DIRS}
                             ${EXAMPLE_DIR}/include
                             ${CMAKE_CURRENT_SOURCE_DIR}
                             ${CMAKE_CURRENT_SOURCE_DIR}/utils
-                            ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/rknpu2/include
                             ${CMAKE_CURRENT_SOURCE_DIR}/common 
                             ${CMAKE_CURRENT_SOURCE_DIR}/common/isp3.x   
                             ${CMAKE_CURRENT_SOURCE_DIR}/include
                             ${CMAKE_CURRENT_SOURCE_DIR}/include/rknn
+                            ${CMAKE_CURRENT_SOURCE_DIR}/include/librga 
                             ${CMAKE_CURRENT_SOURCE_DIR}/include/rkaiq
                             ${CMAKE_CURRENT_SOURCE_DIR}/include/rkaiq/uAPI2
                             ${CMAKE_CURRENT_SOURCE_DIR}/include/rkaiq/common
@@ -86,12 +122,10 @@ target_include_directories(${PROJECT_NAME} PRIVATE
                             ${CMAKE_CURRENT_SOURCE_DIR}/include/rkaiq/iq_parser_v2
                             ${CMAKE_CURRENT_SOURCE_DIR}/include/rkaiq/smartIr
                           )
-                          
-
 message(STATUS "model dir PATH: ${EXAMPLE_DIR}/model")
 
-set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/install/${PROJECT_NAME}_demo")
+set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/install/${LIBC_TYPE}/${PROJECT_NAME}_demo")
 install(TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_INSTALL_PREFIX})
 SET(MODEL_DIR "${EXAMPLE_DIR}/model")
 file(GLOB MODEL_FILES "${MODEL_DIR}/*")  
-install(FILES ${MODEL_FILES} DESTINATION ${CMAKE_INSTALL_PREFIX}/model)                    
+install(FILES ${MODEL_FILES} DESTINATION ${CMAKE_INSTALL_PREFIX}/model)
