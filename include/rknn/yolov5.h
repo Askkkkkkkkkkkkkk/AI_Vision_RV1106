@@ -18,8 +18,6 @@
 
 #include "rknn_api.h"
 
-
-
 #if defined(RV1106_1103) 
     typedef struct {
         char *dma_buf_virt_addr;
@@ -27,7 +25,6 @@
         int size;
     }rknn_dma_buf;
 #endif
-
 
 typedef struct {
     rknn_context rknn_ctx;
