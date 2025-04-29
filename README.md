@@ -36,7 +36,10 @@ luckfox_pico_rtsp_yolov5        | RV1106        | buildroot | sc3336
 ## Compilation
 + Set up environment variables
     ```
+    # uclibc
     export LUCKFOX_SDK_PATH=<luckfox-pico SDK path>
+    # glibc
+    export GLIBC_COMPILER=<gcc bin path>/arm-linux-gnueabihf-
     ```
     **Note**: Use absolute path.
 + Obtain the repository source code and set the execution permissions for the automated build script
@@ -44,7 +47,13 @@ luckfox_pico_rtsp_yolov5        | RV1106        | buildroot | sc3336
     chmod a+x ./build.sh
     ./build.sh
     ```
-+ After executing `./build.sh`, select the example to compile
++ After executing `./build.sh`, select the type of libc
+    ```
+    1) uclibc
+    2) glibc
+    Enter your choice [1-2]:
+    ```
++ Select the example to compile
     ```
     1) luckfox_pico_rtsp_opencv
     2) luckfox_pico_rtsp_opencv_capture

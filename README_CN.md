@@ -22,21 +22,24 @@
 <img src="images/luckfox_pico_rtsp_yolov5.jpg" alt="luckfox_pico_rtsp_yolov5" width="300">
 
 ## 平台支持
- DEMO                           | CPU | 系统 | 摄像头 |
-------------------------------- | --- | ---- | ------- |
-luckfox_pico_rtsp_opencv        | RV1103(需修改分辨率)、RV1106 | buildroot | sc3336
-luckfox_pico_rtsp_opencv_capture| RV1103、RV1106 | buildroot | sc3336 
-luckfox_pico_rtsp_retinaface    | RV1103、RV1106 | buildroot | sc3336 
-luckfox_pico_rtsp_retinaface_osd| RV1103、RV1106 | buildroot | sc3336 
-luckfox_pico_rtsp_yolov5        | RV1106         | buildroot | sc3336 
+ DEMO                           | CPU | Libc
+------------------------------- | --- | ----
+luckfox_pico_rtsp_opencv        | RV1103(需修改分辨率)、RV1106 | buildroot | uclibc / glibc
+luckfox_pico_rtsp_opencv_capture| RV1103、RV1106 | buildroot | uclibc / glibc 
+luckfox_pico_rtsp_retinaface    | RV1103、RV1106 | buildroot | uclibc / glibc
+luckfox_pico_rtsp_retinaface_osd| RV1103、RV1106 | buildroot | uclibc / glibc
+luckfox_pico_rtsp_yolov5        | RV1106         | buildroot | uclibc / glibc
 
 + **RV1103**：`Luckfox Pico` `Luckfox Pico Mini A` `Luckfpx Pico Miini B` `Luckfox Pico Plus`
-+ **RV1106**：`Luckfox Pico Pro` `Luckfox Pico Max` `Luckfox Pico Ultra` `Luckfox Pico Ultra W`
++ **RV1106**：`Luckfox Pico Pro` `Luckfox Pico Max` `Luckfox Pico Ultra` `Luckfox Pico Ultra W` `Luckfox Pico Pi` `Luckfox Pico Pi W`
 
 ## 编译
 + 设置环境变量
     ```
+    # uclibc
     export LUCKFOX_SDK_PATH=< luckfox-pico Sdk 地址>
+    # glibc
+    export GLIBC_COMPILER=<gcc bin path>/arm-linux-gnueabihf-
     ```
     **注意**：使用绝对地址。
 + 获取仓库源码并设置自动编译脚本执行权限
@@ -44,7 +47,13 @@ luckfox_pico_rtsp_yolov5        | RV1106         | buildroot | sc3336
     chmod a+x ./build.sh
     ./build.sh
     ```
-+ 执行 `./build.sh` 后选择编译的例程
++ 执行 `./build.sh` 后选择 libc 类型
+    ```
+    1) uclibc
+    2) glibc
+    Enter your choice [1-2]:
+    ```
++ 选择编译的例程
     ```
     1) luckfox_pico_rtsp_opencv
     2) luckfox_pico_rtsp_opencv_capture
