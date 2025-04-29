@@ -28,9 +28,9 @@
 #include "rtsp_demo.h"
 #include "luckfox_mpi.h"
 
-#include <opencv2/core/core.hpp>
-#include <opencv2/highgui/highgui.hpp>
-#include <opencv2/imgproc/imgproc.hpp>
+#include "opencv2/core/core.hpp"
+#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/imgproc/imgproc.hpp"
 
 #define DISP_WIDTH  1920
 #define DISP_HEIGHT 1080

@@ -17,9 +17,9 @@
 #include "luckfox_mpi.h"
 #include "yolov5.h"
 
-#include <opencv2/core/core.hpp>
-#include <opencv2/highgui/highgui.hpp>
-#include <opencv2/imgproc/imgproc.hpp>
+#include "opencv2/core/core.hpp"
+#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/imgproc/imgproc.hpp"
 
 #define DISP_WIDTH  720
 #define DISP_HEIGHT 480
