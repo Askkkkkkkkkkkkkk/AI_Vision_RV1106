@@ -5,250 +5,1067 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/poll.h>
 #include <time.h>
 #include <unistd.h>
-#include <vector>
+
+
+#include "pipeline_common.h"
+
+#include "ai_thread.h"
+#include "video_thread.h"
+#include "detection_buffer.h"
+
 
 #include "rtsp_demo.h"
 #include "luckfox_mpi.h"
 #include "yolov5.h"
 
+
 #include "opencv2/core/core.hpp"
 #include "opencv2/highgui/highgui.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
 
+
+
 #define DISP_WIDTH  720
 #define DISP_HEIGHT 480
 
-// disp size
-int width    = DISP_WIDTH;
-int height   = DISP_HEIGHT;
 
-// model size
-int model_width = 640;
-int model_height = 640;	
-float scale ;
-int leftPadding ;
-int topPadding  ;
 
-cv::Mat letterbox(cv::Mat input)
+static const int width = DISP_WIDTH;
+static const int height = DISP_HEIGHT;
+
+
+
+static volatile sig_atomic_t g_running = 1;
+
+
+
+static void signal_handler(int sig)
 {
-	float scaleX = (float)model_width  / (float)width; 
-	float scaleY = (float)model_height / (float)height; 
-	scale = scaleX < scaleY ? scaleX : scaleY;
-	
-	int inputWidth   = (int)((float)width * scale);
-	int inputHeight  = (int)((float)height * scale);
+    (void)sig;
 
-	leftPadding = (model_width  - inputWidth) / 2;
-	topPadding  = (model_height - inputHeight) / 2;	
-	
-
-	cv::Mat inputScale;
-    cv::resize(input, inputScale, cv::Size(inputWidth,inputHeight), 0, 0, cv::INTER_LINEAR);	
-	cv::Mat letterboxImage(640, 640, CV_8UC3,cv::Scalar(0, 0, 0));
-    cv::Rect roi(leftPadding, topPadding, inputWidth, inputHeight);
-    inputScale.copyTo(letterboxImage(roi));
-
-	return letterboxImage; 	
-}
-
-void mapCoordinates(int *x, int *y) {	
-	int mx = *x - leftPadding;
-	int my = *y - topPadding;
-
-    *x = (int)((float)mx / scale);
-    *y = (int)((float)my / scale);
+    g_running = 0;
 }
 
 
-int main(int argc, char *argv[]) {
-  system("RkLunch-stop.sh");
-	RK_S32 s32Ret = 0; 
-	int sX,sY,eX,eY; 
-		
-	// Rknn model
-	char text[16];
-	rknn_app_context_t rknn_app_ctx;	
-	object_detect_result_list od_results;
-    int ret;
-	const char *model_path = "./model/yolov5.rknn";
-    memset(&rknn_app_ctx, 0, sizeof(rknn_app_context_t));	
-	init_yolov5_model(model_path, &rknn_app_ctx);
-	printf("init rknn model success!\n");
-	init_post_process();
-
-	//h264_frame	
-	VENC_STREAM_S stFrame;	
-	stFrame.pstPack = (VENC_PACK_S *)malloc(sizeof(VENC_PACK_S));
-	RK_U64 H264_PTS = 0;
-	RK_U32 H264_TimeRef = 0; 
-	VIDEO_FRAME_INFO_S stViFrame;
-	
-	// Create Pool
-	MB_POOL_CONFIG_S PoolCfg;
-	memset(&PoolCfg, 0, sizeof(MB_POOL_CONFIG_S));
-	PoolCfg.u64MBSize = width * height * 3 ;
-	PoolCfg.u32MBCnt = 1;
-	PoolCfg.enAllocType = MB_ALLOC_TYPE_DMA;
-	//PoolCfg.bPreAlloc = RK_FALSE;
-	MB_POOL src_Pool = RK_MPI_MB_CreatePool(&PoolCfg);
-	printf("Create Pool success !\n");	
-
-	// Get MB from Pool 
-	MB_BLK src_Blk = RK_MPI_MB_GetMB(src_Pool, width * height * 3, RK_TRUE);
-	
-	// Build h264_frame
-	VIDEO_FRAME_INFO_S h264_frame;
-	h264_frame.stVFrame.u32Width = width;
-	h264_frame.stVFrame.u32Height = height;
-	h264_frame.stVFrame.u32VirWidth = width;
-	h264_frame.stVFrame.u32VirHeight = height;
-	h264_frame.stVFrame.enPixelFormat =  RK_FMT_RGB888; 
-	h264_frame.stVFrame.u32FrameFlag = 160;
-	h264_frame.stVFrame.pMbBlk = src_Blk;
-	unsigned char *data = (unsigned char *)RK_MPI_MB_Handle2VirAddr(src_Blk);
-	cv::Mat frame(cv::Size(width,height),CV_8UC3,data);
-
-	// rkaiq init
-	RK_BOOL multi_sensor = RK_FALSE;	
-	const char *iq_dir = "/etc/iqfiles";
-	rk_aiq_working_mode_t hdr_mode = RK_AIQ_WORKING_MODE_NORMAL;
-	//hdr_mode = RK_AIQ_WORKING_MODE_ISP_HDR2;
-	SAMPLE_COMM_ISP_Init(0, hdr_mode, multi_sensor, iq_dir);
-	SAMPLE_COMM_ISP_Run(0);
-
-	// rkmpi init
-	if (RK_MPI_SYS_Init() != RK_SUCCESS) {
-		RK_LOGE("rk mpi sys init fail!");
-		return -1;
-	}
-
-	// rtsp init	
-	rtsp_demo_handle g_rtsplive = NULL;
-	rtsp_session_handle g_rtsp_session;
-	g_rtsplive = create_rtsp_demo(554);
-	g_rtsp_session = rtsp_new_session(g_rtsplive, "/live/0");
-	rtsp_set_video(g_rtsp_session, RTSP_CODEC_ID_VIDEO_H264, NULL, 0);
-	rtsp_sync_video_ts(g_rtsp_session, rtsp_get_reltime(), rtsp_get_ntptime());
-	
-	// vi init
-	vi_dev_init();
-	vi_chn_init(0, width, height);
-
-	// venc init
-	RK_CODEC_ID_E enCodecType = RK_VIDEO_ID_AVC;
-	venc_init(0, width, height, enCodecType);
-
-	printf("venc init success\n");	
-	
-  	while(1)
-	{	
-		// get vi frame
-		h264_frame.stVFrame.u32TimeRef = H264_TimeRef++;
-		h264_frame.stVFrame.u64PTS = TEST_COMM_GetNowUs(); 
-		s32Ret = RK_MPI_VI_GetChnFrame(0, 0, &stViFrame, -1);
-		if(s32Ret == RK_SUCCESS)
-		{
-			void *vi_data = RK_MPI_MB_Handle2VirAddr(stViFrame.stVFrame.pMbBlk);	
-
-			cv::Mat yuv420sp(height + height / 2, width, CV_8UC1, vi_data);
-			cv::Mat bgr(height, width, CV_8UC3, data);			
-			
-			cv::cvtColor(yuv420sp, bgr, cv::COLOR_YUV420sp2BGR);
-			cv::resize(bgr, frame, cv::Size(width ,height), 0, 0, cv::INTER_LINEAR);
-			
-			//letterbox
-			cv::Mat letterboxImage = letterbox(frame);	
-			memcpy(rknn_app_ctx.input_mems[0]->virt_addr, letterboxImage.data, model_width*model_height*3);		
-			inference_yolov5_model(&rknn_app_ctx, &od_results);
-
-			for(int i = 0; i < od_results.count; i++)
-			{					
-				if(od_results.count >= 1)
-				{
-					object_detect_result *det_result = &(od_results.results[i]);
-	
-					sX = (int)(det_result->box.left   );	
-					sY = (int)(det_result->box.top 	  );	
-					eX = (int)(det_result->box.right  );	
-					eY = (int)(det_result->box.bottom );
-					mapCoordinates(&sX,&sY);
-					mapCoordinates(&eX,&eY);
-					
-					printf("%s @ (%d %d %d %d) %.3f\n", coco_cls_to_name(det_result->cls_id),
-							 sX, sY, eX, eY, det_result->prop);
-
-					cv::rectangle(frame,cv::Point(sX ,sY),
-								        cv::Point(eX ,eY),
-										cv::Scalar(0,255,0),3);
-					sprintf(text, "%s %.1f%%", coco_cls_to_name(det_result->cls_id), det_result->prop * 100);
-					cv::putText(frame,text,cv::Point(sX, sY - 8),
-										   cv::FONT_HERSHEY_SIMPLEX,1,
-										   cv::Scalar(0,255,0),2);
-				}
-			}
-
-		}
-		memcpy(data, frame.data, width * height * 3);					
-		
-		// encode H264
-		RK_MPI_VENC_SendFrame(0, &h264_frame,-1);
-
-		// rtsp
-		s32Ret = RK_MPI_VENC_GetStream(0, &stFrame, -1);
-		if(s32Ret == RK_SUCCESS)
-		{
-			if(g_rtsplive && g_rtsp_session)
-			{
-				//printf("len = %d PTS = %d \n",stFrame.pstPack->u32Len, stFrame.pstPack->u64PTS);	
-				void *pData = RK_MPI_MB_Handle2VirAddr(stFrame.pstPack->pMbBlk);
-				rtsp_tx_video(g_rtsp_session, (uint8_t *)pData, stFrame.pstPack->u32Len,
-							  stFrame.pstPack->u64PTS);
-				rtsp_do_event(g_rtsplive);
-			}
-		}
-
-		// release frame 
-		s32Ret = RK_MPI_VI_ReleaseChnFrame(0, 0, &stViFrame);
-		if (s32Ret != RK_SUCCESS) {
-			RK_LOGE("RK_MPI_VI_ReleaseChnFrame fail %x", s32Ret);
-		}
-		s32Ret = RK_MPI_VENC_ReleaseStream(0, &stFrame);
-		if (s32Ret != RK_SUCCESS) {
-			RK_LOGE("RK_MPI_VENC_ReleaseStream fail %x", s32Ret);
-		}
-		memset(text,0,8);
-	}
 
 
-	// Destory MB
-	RK_MPI_MB_ReleaseMB(src_Blk);
-	// Destory Pool
-	RK_MPI_MB_DestroyPool(src_Pool);
-	
-	RK_MPI_VI_DisableChn(0, 0);
-	RK_MPI_VI_DisableDev(0);
 
-	SAMPLE_COMM_ISP_Stop(0);
-	
-	RK_MPI_VENC_StopRecvFrame(0);
-	RK_MPI_VENC_DestroyChn(0);
+// ============================================================
+// Capture thread
+//
+// VI
+// |
+// YUV420SP copy
+// |
+// CaptureQueue
+//
+// ============================================================
 
-	free(stFrame.pstPack);
 
-	if (g_rtsplive)
-		rtsp_del_demo(g_rtsplive);
-	
-	RK_MPI_SYS_Exit();
+struct CapturePacket
+{
 
-	// Release rknn model
-    release_yolov5_model(&rknn_app_ctx);		
-	deinit_post_process();
-	
-	return 0;
+    uint64_t frame_id;
+
+
+    uint64_t capture_ts_us;
+
+
+    double capture_copy_ms;
+
+
+    cv::Mat yuv420sp;
+
+};
+
+
+
+struct CaptureThreadContext
+{
+
+    LatestQueue<CapturePacket>* output_queue;
+
+};
+
+
+
+
+
+static void* capture_thread(void* arg)
+{
+
+    CaptureThreadContext* ctx =
+        (CaptureThreadContext*)arg;
+
+
+
+    uint64_t frame_id = 0;
+
+
+
+    printf("[V3] Capture thread started\n");
+
+
+
+    while(g_running)
+    {
+
+
+        VIDEO_FRAME_INFO_S vi_frame;
+
+
+        memset(
+            &vi_frame,
+            0,
+            sizeof(vi_frame)
+        );
+
+
+
+        RK_S32 ret =
+            RK_MPI_VI_GetChnFrame(
+                0,
+                0,
+                &vi_frame,
+                1000
+            );
+
+
+
+        if(ret != RK_SUCCESS)
+        {
+
+            if(g_running)
+            {
+                RK_LOGE(
+                    "RK_MPI_VI_GetChnFrame fail %x",
+                    ret
+                );
+            }
+
+            continue;
+        }
+
+
+
+
+        void* vi_data =
+            RK_MPI_MB_Handle2VirAddr(
+                vi_frame.stVFrame.pMbBlk
+            );
+
+
+
+        CapturePacket packet;
+
+
+        packet.frame_id =
+            ++frame_id;
+
+
+        packet.capture_ts_us =
+            TEST_COMM_GetNowUs();
+
+
+
+        packet.yuv420sp.create(
+            height + height/2,
+            width,
+            CV_8UC1
+        );
+
+
+
+        memcpy(
+            packet.yuv420sp.data,
+            vi_data,
+            width * height * 3 / 2
+        );
+
+
+
+        RK_MPI_VI_ReleaseChnFrame(
+            0,
+            0,
+            &vi_frame
+        );
+
+
+
+        if(!ctx->output_queue->push(packet))
+        {
+            break;
+        }
+
+
+    }
+
+
+
+    printf("[V3] Capture thread stopped\n");
+
+
+    return NULL;
+
+}
+
+
+
+
+
+
+
+
+// ============================================================
+// Preprocess thread
+//
+// YUV420SP
+//     |
+//     v
+// BGR
+//     |
+//     v
+// resize + letterbox
+//     |
+//     v
+// AI queue
+//
+// ============================================================
+
+
+
+struct PreprocessThreadContext
+{
+
+    LatestQueue<CapturePacket>* input_queue;
+
+
+    LatestQueue<PreprocessPacket>* output_queue;
+
+};
+
+
+
+
+
+static void* preprocess_thread(void* arg)
+{
+
+    PreprocessThreadContext* ctx =
+        (PreprocessThreadContext*)arg;
+
+
+
+    CapturePacket input;
+
+
+
+    printf("[V3] Preprocess thread started\n");
+
+
+
+    while(
+        g_running &&
+        ctx->input_queue->pop(&input)
+    )
+    {
+
+
+        PreprocessPacket output;
+
+
+
+        output.frame_id =
+            input.frame_id;
+
+
+        output.capture_ts_us =
+            input.capture_ts_us;
+
+
+
+        cv::cvtColor(
+            input.yuv420sp,
+            output.frame_bgr,
+            cv::COLOR_YUV420sp2BGR
+        );
+
+
+
+        float scale_x =
+            640.0f / width;
+
+
+        float scale_y =
+            640.0f / height;
+
+
+
+        output.scale =
+            scale_x < scale_y ?
+            scale_x :
+            scale_y;
+
+
+
+        int input_width =
+            width * output.scale;
+
+
+
+        int input_height =
+            height * output.scale;
+
+
+
+        output.left_padding =
+            (640 - input_width) / 2;
+
+
+        output.top_padding =
+            (640 - input_height) / 2;
+
+
+
+
+        cv::Mat resized;
+
+
+
+        cv::resize(
+            output.frame_bgr,
+            resized,
+            cv::Size(
+                input_width,
+                input_height
+            )
+        );
+
+
+
+        output.model_input =
+            cv::Mat(
+                640,
+                640,
+                CV_8UC3,
+                cv::Scalar(
+                    0,
+                    0,
+                    0
+                )
+            );
+
+
+
+        cv::Rect roi(
+            output.left_padding,
+            output.top_padding,
+            input_width,
+            input_height
+        );
+
+
+
+        resized.copyTo(
+            output.model_input(roi)
+        );
+
+
+
+        if(!ctx->output_queue->push(output))
+        {
+            break;
+        }
+
+
+    }
+
+
+
+    printf("[V3] Preprocess thread stopped\n");
+
+
+    return NULL;
+
+}
+int main(int argc, char *argv[])
+{
+
+    (void)argc;
+    (void)argv;
+
+
+
+    signal(
+        SIGINT,
+        signal_handler
+    );
+
+
+    signal(
+        SIGTERM,
+        signal_handler
+    );
+
+
+
+    system(
+        "RkLunch-stop.sh"
+    );
+
+
+
+    int ret = 0;
+
+
+
+    // ========================================================
+    // RKNN init
+    // ========================================================
+
+
+    rknn_app_context_t rknn_app_ctx;
+
+
+    memset(
+        &rknn_app_ctx,
+        0,
+        sizeof(rknn_app_ctx)
+    );
+
+
+
+    const char* model_path =
+        "./model/yolov5.rknn";
+
+
+
+    ret =
+        init_yolov5_model(
+            model_path,
+            &rknn_app_ctx
+        );
+
+
+    if(ret != 0)
+    {
+
+        printf(
+            "init yolov5 model failed\n"
+        );
+
+        return -1;
+
+    }
+
+
+
+    init_post_process();
+
+
+
+
+
+    // ========================================================
+    // RGB DMA buffer
+    // ========================================================
+
+
+    MB_POOL_CONFIG_S pool_cfg;
+
+
+    memset(
+        &pool_cfg,
+        0,
+        sizeof(pool_cfg)
+    );
+
+
+
+    pool_cfg.u64MBSize =
+        width * height * 3;
+
+
+    pool_cfg.u32MBCnt =
+        1;
+
+
+    pool_cfg.enAllocType =
+        MB_ALLOC_TYPE_DMA;
+
+
+
+    MB_POOL src_pool =
+        RK_MPI_MB_CreatePool(
+            &pool_cfg
+        );
+
+
+
+    MB_BLK src_blk =
+        RK_MPI_MB_GetMB(
+            src_pool,
+            width * height * 3,
+            RK_TRUE
+        );
+
+
+
+    unsigned char* rgb_dma_data =
+        (unsigned char*)
+        RK_MPI_MB_Handle2VirAddr(
+            src_blk
+        );
+
+
+
+
+
+    VIDEO_FRAME_INFO_S h264_frame;
+
+
+    memset(
+        &h264_frame,
+        0,
+        sizeof(h264_frame)
+    );
+
+
+
+    h264_frame.stVFrame.u32Width =
+        width;
+
+
+    h264_frame.stVFrame.u32Height =
+        height;
+
+
+    h264_frame.stVFrame.u32VirWidth =
+        width;
+
+
+    h264_frame.stVFrame.u32VirHeight =
+        height;
+
+
+    h264_frame.stVFrame.enPixelFormat =
+        RK_FMT_RGB888;
+
+
+    h264_frame.stVFrame.pMbBlk =
+        src_blk;
+
+
+
+
+
+    VENC_STREAM_S venc_stream;
+
+
+    memset(
+        &venc_stream,
+        0,
+        sizeof(venc_stream)
+    );
+
+
+
+    venc_stream.pstPack =
+        (VENC_PACK_S*)
+        malloc(
+            sizeof(VENC_PACK_S)
+        );
+
+
+
+
+
+    // ========================================================
+    // ISP / VI / VENC / RTSP
+    // ========================================================
+
+
+    RK_BOOL multi_sensor =
+        RK_FALSE;
+
+
+    const char* iq_dir =
+        "/etc/iqfiles";
+
+
+
+    rk_aiq_working_mode_t hdr_mode =
+        RK_AIQ_WORKING_MODE_NORMAL;
+
+
+
+    SAMPLE_COMM_ISP_Init(
+        0,
+        hdr_mode,
+        multi_sensor,
+        iq_dir
+    );
+
+
+    SAMPLE_COMM_ISP_Run(0);
+
+
+
+
+    if(
+        RK_MPI_SYS_Init()
+        != RK_SUCCESS
+    )
+    {
+
+        printf(
+            "RK_MPI_SYS_Init failed\n"
+        );
+
+        return -1;
+
+    }
+
+
+
+
+    rtsp_demo_handle rtsplive =
+        create_rtsp_demo(
+            554
+        );
+
+
+
+    rtsp_session_handle rtsp_session =
+        rtsp_new_session(
+            rtsplive,
+            "/live/0"
+        );
+
+
+
+    rtsp_set_video(
+        rtsp_session,
+        RTSP_CODEC_ID_VIDEO_H264,
+        NULL,
+        0
+    );
+
+
+
+    rtsp_sync_video_ts(
+        rtsp_session,
+        rtsp_get_reltime(),
+        rtsp_get_ntptime()
+    );
+
+
+
+    vi_dev_init();
+
+
+    vi_chn_init(
+        0,
+        width,
+        height
+    );
+
+
+
+    venc_init(
+        0,
+        width,
+        height,
+        RK_VIDEO_ID_AVC
+    );
+
+
+
+
+
+    // ========================================================
+    // Pipeline queues
+    // ========================================================
+
+
+    LatestQueue<CapturePacket> capture_queue(
+        PIPELINE_QUEUE_SIZE
+    );
+
+
+    LatestQueue<PreprocessPacket> preprocess_queue(
+        PIPELINE_QUEUE_SIZE
+    );
+
+
+
+    DetectionBuffer detection_buffer;
+
+
+
+
+
+    // ========================================================
+    // Context
+    // ========================================================
+
+
+    CaptureThreadContext capture_ctx;
+
+
+    capture_ctx.output_queue =
+        &capture_queue;
+
+
+
+
+
+    PreprocessThreadContext preprocess_ctx;
+
+
+    preprocess_ctx.input_queue =
+        &capture_queue;
+
+
+    preprocess_ctx.output_queue =
+        &preprocess_queue;
+
+
+
+
+
+    AIThreadContext ai_ctx;
+
+
+    ai_ctx.input_queue =
+        &preprocess_queue;
+
+
+    ai_ctx.detection_buffer =
+        &detection_buffer;
+
+
+    ai_ctx.rknn_ctx =
+        &rknn_app_ctx;
+
+
+    ai_ctx.running =
+        &g_running;
+
+
+
+
+
+    VideoThreadContext video_ctx;
+
+
+    video_ctx.detection_buffer =
+        &detection_buffer;
+
+
+    video_ctx.rgb_dma_data =
+        rgb_dma_data;
+
+
+    video_ctx.h264_frame =
+        &h264_frame;
+
+
+    video_ctx.venc_stream =
+        &venc_stream;
+
+
+    video_ctx.rtsplive =
+        rtsplive;
+
+
+    video_ctx.rtsp_session =
+        rtsp_session;
+
+
+    video_ctx.running =
+        &g_running;
+
+
+
+
+
+
+    // ========================================================
+    // Create threads
+    // ========================================================
+
+
+    pthread_t capture_tid;
+
+    pthread_t preprocess_tid;
+
+    pthread_t ai_tid;
+
+    pthread_t video_tid;
+
+
+
+
+int ret_thread;
+
+
+ret_thread = pthread_create(
+    &capture_tid,
+    NULL,
+    capture_thread,
+    &capture_ctx
+);
+
+printf(
+    "capture thread create ret=%d\n",
+    ret_thread
+);
+
+
+ret_thread = pthread_create(
+    &preprocess_tid,
+    NULL,
+    preprocess_thread,
+    &preprocess_ctx
+);
+
+printf(
+    "preprocess thread create ret=%d\n",
+    ret_thread
+);
+
+
+
+ret_thread = pthread_create(
+    &ai_tid,
+    NULL,
+    ai_thread,
+    &ai_ctx
+);
+
+printf(
+    "ai thread create ret=%d\n",
+    ret_thread
+);
+
+
+
+ret_thread = pthread_create(
+    &video_tid,
+    NULL,
+    video_thread,
+    &video_ctx
+);
+
+printf(
+    "video thread create ret=%d\n",
+    ret_thread
+);
+
+
+fflush(stdout);
+
+
+
+    pthread_create(
+        &preprocess_tid,
+        NULL,
+        preprocess_thread,
+        &preprocess_ctx
+    );
+
+
+
+    pthread_create(
+        &ai_tid,
+        NULL,
+        ai_thread,
+        &ai_ctx
+    );
+
+
+
+    pthread_create(
+        &video_tid,
+        NULL,
+        video_thread,
+        &video_ctx
+    );
+
+
+
+
+
+    printf(
+        "\n=============================\n"
+    );
+
+
+    printf(
+        " V3 pipeline started\n"
+    );
+
+
+    printf(
+        " Capture -> Preprocess\n"
+    );
+
+
+    printf(
+        " AI -> DetectionBuffer\n"
+    );
+
+
+    printf(
+        " Video -> RTSP\n"
+    );
+
+
+    printf(
+        "=============================\n"
+    );
+
+
+
+
+
+
+    while(g_running)
+    {
+
+        sleep(1);
+
+    }
+
+
+
+
+
+    // ========================================================
+    // Stop
+    // ========================================================
+
+
+    capture_queue.stop();
+
+
+    preprocess_queue.stop();
+
+
+
+
+
+    pthread_join(
+        capture_tid,
+        NULL
+    );
+
+
+    pthread_join(
+        preprocess_tid,
+        NULL
+    );
+
+
+    pthread_join(
+        ai_tid,
+        NULL
+    );
+
+
+    pthread_join(
+        video_tid,
+        NULL
+    );
+
+
+
+
+
+
+    // ========================================================
+    // Cleanup
+    // ========================================================
+
+
+    RK_MPI_MB_ReleaseMB(
+        src_blk
+    );
+
+
+    RK_MPI_MB_DestroyPool(
+        src_pool
+    );
+
+
+
+    RK_MPI_VI_DisableChn(
+        0,
+        0
+    );
+
+
+    RK_MPI_VI_DisableDev(
+        0
+    );
+
+
+
+    SAMPLE_COMM_ISP_Stop(
+        0
+    );
+
+
+
+    RK_MPI_VENC_StopRecvFrame(
+        0
+    );
+
+
+    RK_MPI_VENC_DestroyChn(
+        0
+    );
+
+
+
+    if(rtsplive)
+    {
+
+        rtsp_del_demo(
+            rtsplive
+        );
+
+    }
+
+
+
+    RK_MPI_SYS_Exit();
+
+
+
+    release_yolov5_model(
+        &rknn_app_ctx
+    );
+
+
+    deinit_post_process();
+
+
+
+    printf(
+        "[V3] Exit cleanly\n"
+    );
+
+
+
+    return 0;
+
 }
