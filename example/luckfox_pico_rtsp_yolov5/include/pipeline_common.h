@@ -11,24 +11,9 @@
 #include "opencv2/core/core.hpp"
 
 
-// ============================================================
-// Pipeline configuration
-// ============================================================
-
 #define PIPELINE_QUEUE_SIZE 1
 
 
-
-// ============================================================
-// LatestQueue
-//
-// Bounded queue.
-// When queue is full:
-//      remove old frame
-//      keep newest frame
-//
-// Used for real-time camera pipeline.
-// ============================================================
 
 template <typename T>
 class LatestQueue
@@ -42,6 +27,7 @@ public:
         stopped_(false),
         dropped_(0)
     {
+
         pthread_mutex_init(
             &mutex_,
             NULL
@@ -57,6 +43,7 @@ public:
 
     ~LatestQueue()
     {
+
         pthread_cond_destroy(
             &cond_
         );
@@ -78,6 +65,7 @@ public:
 
         if(stopped_)
         {
+
             pthread_mutex_unlock(
                 &mutex_
             );
@@ -118,13 +106,13 @@ public:
 
 
 
+
     bool pop(T* item)
     {
 
         pthread_mutex_lock(
             &mutex_
         );
-
 
 
         while(queue_.empty() && !stopped_)
@@ -152,7 +140,9 @@ public:
 
 
 
-        *item = queue_.front();
+        *item =
+            queue_.front();
+
 
 
         queue_.pop_front();
@@ -200,6 +190,7 @@ public:
 
 
 
+
     uint64_t dropped()
     {
 
@@ -208,7 +199,9 @@ public:
         );
 
 
-        uint64_t value = dropped_;
+        uint64_t value =
+            dropped_;
+
 
 
         pthread_mutex_unlock(
@@ -224,12 +217,9 @@ public:
 
 private:
 
-
     size_t capacity_;
 
-
     bool stopped_;
-
 
     uint64_t dropped_;
 
@@ -239,7 +229,6 @@ private:
 
     pthread_mutex_t mutex_;
 
-
     pthread_cond_t cond_;
 
 };
@@ -248,59 +237,54 @@ private:
 
 
 
+
+
 // ============================================================
 // PreprocessPacket
 //
-// preprocess thread output:
-//
+// Capture
+//   |
 // YUV420SP
-//      |
-//      v
-// BGR frame
-//      |
-//      v
-// Letterbox 640x640
-//      |
-//      v
-// AI thread
+//   |
+// BGR
+//   |
+// resize + letterbox
+//   |
+// AI Thread
 //
 // ============================================================
-
 
 struct PreprocessPacket
 {
 
-    // Frame ID
     uint64_t frame_id;
 
 
-
-    // Capture timestamp
     uint64_t capture_ts_us;
 
 
 
-    // Timing
     double capture_copy_ms;
+
 
     double preprocess_ms;
 
 
 
-    // Original image
-    // Used for drawing boxes
+    // Original BGR frame
+    // Used for detection coordinate mapping
+
     cv::Mat frame_bgr;
 
 
 
-    // 640x640 model input
+    // 640x640 input
+
     cv::Mat model_input;
 
 
 
     // Letterbox parameters
-    // Used to map YOLO result back
-    // to original image
 
     float scale;
 
@@ -311,6 +295,45 @@ struct PreprocessPacket
     int top_padding;
 
 };
+
+
+
+
+
+
+
+// ============================================================
+// VideoPacket
+//
+// Preprocess Thread
+//        |
+//        v
+// Video Thread
+//        |
+//        v
+// Draw + VENC + RTSP
+//
+// Avoid duplicate:
+// YUV -> BGR conversion
+//
+// ============================================================
+
+struct VideoPacket
+{
+
+    uint64_t frame_id;
+
+
+    uint64_t capture_ts_us;
+
+
+
+    // Already converted BGR image
+
+    cv::Mat frame_bgr;
+
+};
+
 
 
 

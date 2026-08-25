@@ -5,6 +5,7 @@
 #include <signal.h>
 
 
+#include "pipeline_common.h"
 #include "detection_buffer.h"
 #include "luckfox_mpi.h"
 #include "rtsp_demo.h"
@@ -19,13 +20,27 @@
 struct VideoThreadContext
 {
 
+    // Receive processed BGR frame
+    // from preprocess thread
+
+    LatestQueue<VideoPacket>* input_queue;
+
+
+
+    // AI detection result buffer
+
     DetectionBuffer* detection_buffer;
 
+
+
+    // VENC input buffer
 
     unsigned char* rgb_dma_data;
 
 
+
     VIDEO_FRAME_INFO_S* h264_frame;
+
 
 
     VENC_STREAM_S* venc_stream;
@@ -33,6 +48,7 @@ struct VideoThreadContext
 
 
     rtsp_demo_handle rtsplive;
+
 
 
     rtsp_session_handle rtsp_session;

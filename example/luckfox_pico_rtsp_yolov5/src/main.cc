@@ -1,3 +1,5 @@
+// main.cc 1/2
+
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -36,7 +38,6 @@
 #define DISP_HEIGHT 480
 
 
-
 static const int width = DISP_WIDTH;
 static const int height = DISP_HEIGHT;
 
@@ -48,26 +49,21 @@ static volatile sig_atomic_t g_running = 1;
 
 static void signal_handler(int sig)
 {
+
     (void)sig;
 
     g_running = 0;
+
 }
 
 
 
 
 
-// ============================================================
-// Capture thread
-//
-// VI
-// |
-// YUV420SP copy
-// |
-// CaptureQueue
-//
-// ============================================================
 
+// ============================================================
+// Capture Packet
+// ============================================================
 
 struct CapturePacket
 {
@@ -87,12 +83,16 @@ struct CapturePacket
 
 
 
+
+
+
 struct CaptureThreadContext
 {
 
     LatestQueue<CapturePacket>* output_queue;
 
 };
+
 
 
 
@@ -141,18 +141,8 @@ static void* capture_thread(void* arg)
 
         if(ret != RK_SUCCESS)
         {
-
-            if(g_running)
-            {
-                RK_LOGE(
-                    "RK_MPI_VI_GetChnFrame fail %x",
-                    ret
-                );
-            }
-
             continue;
         }
-
 
 
 
@@ -170,13 +160,14 @@ static void* capture_thread(void* arg)
             ++frame_id;
 
 
+
         packet.capture_ts_us =
             TEST_COMM_GetNowUs();
 
 
 
         packet.yuv420sp.create(
-            height + height/2,
+            height + height / 2,
             width,
             CV_8UC1
         );
@@ -222,20 +213,18 @@ static void* capture_thread(void* arg)
 
 
 
-
 // ============================================================
-// Preprocess thread
+// Preprocess Thread
 //
+// Capture
+//     |
 // YUV420SP
 //     |
-//     v
 // BGR
 //     |
-//     v
-// resize + letterbox
-//     |
-//     v
-// AI queue
+// +-----------+
+// |           |
+// AI        Video
 //
 // ============================================================
 
@@ -249,7 +238,11 @@ struct PreprocessThreadContext
 
     LatestQueue<PreprocessPacket>* output_queue;
 
+
+    LatestQueue<VideoPacket>* video_queue;
+
 };
+
 
 
 
@@ -286,6 +279,7 @@ static void* preprocess_thread(void* arg)
             input.frame_id;
 
 
+
         output.capture_ts_us =
             input.capture_ts_us;
 
@@ -299,8 +293,33 @@ static void* preprocess_thread(void* arg)
 
 
 
+        // send frame to video thread
+
+        VideoPacket video;
+
+
+        video.frame_id =
+            output.frame_id;
+
+
+        video.capture_ts_us =
+            output.capture_ts_us;
+
+
+        video.frame_bgr =
+            output.frame_bgr;
+
+
+
+        ctx->video_queue->push(video);
+
+
+
+
+
         float scale_x =
             640.0f / width;
+
 
 
         float scale_y =
@@ -329,9 +348,9 @@ static void* preprocess_thread(void* arg)
             (640 - input_width) / 2;
 
 
+
         output.top_padding =
             (640 - input_height) / 2;
-
 
 
 
@@ -395,6 +414,10 @@ static void* preprocess_thread(void* arg)
     return NULL;
 
 }
+
+// main.cc 2/2
+
+
 int main(int argc, char *argv[])
 {
 
@@ -452,6 +475,7 @@ int main(int argc, char *argv[])
             model_path,
             &rknn_app_ctx
         );
+
 
 
     if(ret != 0)
@@ -538,7 +562,6 @@ int main(int argc, char *argv[])
     );
 
 
-
     h264_frame.stVFrame.u32Width =
         width;
 
@@ -582,6 +605,7 @@ int main(int argc, char *argv[])
         malloc(
             sizeof(VENC_PACK_S)
         );
+
 
 
 
@@ -678,7 +702,6 @@ int main(int argc, char *argv[])
     );
 
 
-
     venc_init(
         0,
         width,
@@ -691,7 +714,7 @@ int main(int argc, char *argv[])
 
 
     // ========================================================
-    // Pipeline queues
+    // Queues
     // ========================================================
 
 
@@ -701,6 +724,11 @@ int main(int argc, char *argv[])
 
 
     LatestQueue<PreprocessPacket> preprocess_queue(
+        PIPELINE_QUEUE_SIZE
+    );
+
+
+    LatestQueue<VideoPacket> video_queue(
         PIPELINE_QUEUE_SIZE
     );
 
@@ -738,6 +766,10 @@ int main(int argc, char *argv[])
         &preprocess_queue;
 
 
+    preprocess_ctx.video_queue =
+        &video_queue;
+
+
 
 
 
@@ -764,6 +796,10 @@ int main(int argc, char *argv[])
 
 
     VideoThreadContext video_ctx;
+
+
+    video_ctx.input_queue =
+        &video_queue;
 
 
     video_ctx.detection_buffer =
@@ -798,6 +834,7 @@ int main(int argc, char *argv[])
 
 
 
+
     // ========================================================
     // Create threads
     // ========================================================
@@ -813,66 +850,12 @@ int main(int argc, char *argv[])
 
 
 
-
-int ret_thread;
-
-
-ret_thread = pthread_create(
-    &capture_tid,
-    NULL,
-    capture_thread,
-    &capture_ctx
-);
-
-printf(
-    "capture thread create ret=%d\n",
-    ret_thread
-);
-
-
-ret_thread = pthread_create(
-    &preprocess_tid,
-    NULL,
-    preprocess_thread,
-    &preprocess_ctx
-);
-
-printf(
-    "preprocess thread create ret=%d\n",
-    ret_thread
-);
-
-
-
-ret_thread = pthread_create(
-    &ai_tid,
-    NULL,
-    ai_thread,
-    &ai_ctx
-);
-
-printf(
-    "ai thread create ret=%d\n",
-    ret_thread
-);
-
-
-
-ret_thread = pthread_create(
-    &video_tid,
-    NULL,
-    video_thread,
-    &video_ctx
-);
-
-printf(
-    "video thread create ret=%d\n",
-    ret_thread
-);
-
-
-fflush(stdout);
-
+    pthread_create(
+        &capture_tid,
+        NULL,
+        capture_thread,
+        &capture_ctx
+    );
 
 
     pthread_create(
@@ -883,14 +866,12 @@ fflush(stdout);
     );
 
 
-
     pthread_create(
         &ai_tid,
         NULL,
         ai_thread,
         &ai_ctx
     );
-
 
 
     pthread_create(
@@ -915,17 +896,13 @@ fflush(stdout);
 
 
     printf(
-        " Capture -> Preprocess\n"
-    );
-
-
-    printf(
-        " AI -> DetectionBuffer\n"
-    );
-
-
-    printf(
-        " Video -> RTSP\n"
+        " Capture\n"
+        "    |\n"
+        " Preprocess\n"
+        "   |      |\n"
+        "   AI   Video\n"
+        "          |\n"
+        "        RTSP\n"
     );
 
 
@@ -949,6 +926,7 @@ fflush(stdout);
 
 
 
+
     // ========================================================
     // Stop
     // ========================================================
@@ -958,6 +936,9 @@ fflush(stdout);
 
 
     preprocess_queue.stop();
+
+
+    video_queue.stop();
 
 
 
@@ -985,6 +966,7 @@ fflush(stdout);
         video_tid,
         NULL
     );
+
 
 
 
