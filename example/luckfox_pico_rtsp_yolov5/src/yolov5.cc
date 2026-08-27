@@ -18,6 +18,7 @@
 #include <math.h>
 
 #include "yolov5.h"
+#include "runtime_config.h"
 
 static void dump_tensor_attr(rknn_tensor_attr *attr)
 {
@@ -185,8 +186,9 @@ int release_yolov5_model(rknn_app_context_t *app_ctx)
 int inference_yolov5_model(rknn_app_context_t *app_ctx,  object_detect_result_list *od_results)
 {
     int ret;
-    const float nms_threshold = NMS_THRESH;      // 默认的NMS阈值
-    const float box_conf_threshold = BOX_THRESH; // 默认的置信度阈值
+    const RuntimeConfig& config = runtime_config();
+    const float nms_threshold = config.nms_thresh;
+    const float box_conf_threshold = config.box_thresh;
    
     ret = rknn_run(app_ctx->rknn_ctx, nullptr);
     if (ret < 0) {

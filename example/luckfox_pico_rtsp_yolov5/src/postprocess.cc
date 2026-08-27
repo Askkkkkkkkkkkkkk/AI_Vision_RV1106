@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "yolov5.h"
+#include "runtime_config.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -23,8 +24,6 @@
 
 #include <set>
 #include <vector>
-#define LABEL_NALE_TXT_PATH "./model/coco_80_labels_list.txt"
-
 static char *labels[OBJ_CLASS_NUM];
 
 const int anchor[3][6] = {{10, 13, 16, 30, 33, 23},
@@ -479,10 +478,11 @@ int post_process(rknn_app_context_t *app_ctx, void *outputs,  float conf_thresho
 int init_post_process()
 {
     int ret = 0;
-    ret = loadLabelName(LABEL_NALE_TXT_PATH, labels);
+    const char* label_path = runtime_config().label_path;
+    ret = loadLabelName(label_path, labels);
     if (ret < 0)
     {
-        printf("Load %s failed!\n", LABEL_NALE_TXT_PATH);
+        printf("Load %s failed!\n", label_path);
         return -1;
     }
     return 0;

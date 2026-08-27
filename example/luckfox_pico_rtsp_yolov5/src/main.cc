@@ -26,6 +26,7 @@
 #include "rtsp_demo.h"
 #include "luckfox_mpi.h"
 #include "yolov5.h"
+#include "runtime_config.h"
 
 
 #include "opencv2/core/core.hpp"
@@ -421,8 +422,17 @@ static void* preprocess_thread(void* arg)
 int main(int argc, char *argv[])
 {
 
-    (void)argc;
-    (void)argv;
+    const char* config_path = "./config/ai_vision.conf";
+
+    if (argc == 3 && strcmp(argv[1], "--config") == 0) {
+        config_path = argv[2];
+    } else if (argc != 1) {
+        printf("Usage: %s [--config <path>]\n", argv[0]);
+        return -1;
+    }
+
+    load_runtime_config(config_path);
+    RuntimeConfig& config = runtime_config();
 
 
 
@@ -465,8 +475,7 @@ int main(int argc, char *argv[])
 
 
 
-    const char* model_path =
-        "./model/yolov5.rknn";
+    const char* model_path = config.model_path;
 
 
 
